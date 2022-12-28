@@ -1,0 +1,28 @@
+{
+	"zones": [
+		{
+			"zone": "domain1.com",
+			"record": "subdomain.domain1.com",
+            "proxied_state": 1,
+			"global_api_key": "123APIKEY123",
+			"cloudflare_email": "youremail@gmail.com",
+			"enabled": true
+		},
+		{
+			"zone": "domain2.com",
+			"record": "sub.domain2.com",
+            "proxied_state": 1,
+			"global_api_key": "123APIKEY123",
+			"cloudflare_email": "youremail@gmail.com",
+			"enabled": true
+		},
+		{
+			"zone": "domain3.com",
+			"record": "www.domain4.com",
+            "proxied_state": 1,
+			"global_api_key": "123APIKEY123",
+			"cloudflare_email": "youremail@gmail.com",
+			"enabled": true
+		}
+	]
+}

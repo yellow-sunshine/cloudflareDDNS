@@ -1,27 +1,26 @@
-from urllib3.exceptions import HTTPError as BaseHTTPError
-import sys
-import re
-import json
-import requests
-
 '''
 cloudflareDDNS
-This was created so I could update dns records on cloudflare when my IP address changed
-It uses ipify.org api to get your remote IP then updates the specified zone's dns on cloudflare
-Requires Python 3.7 or later
+
+This script was created so I could update a dns record on cloudflare when my IP address changed
+It uses 3 different APIs to get your remote IP then updates the specified zone's dns on cloudflare
+
+Requires Python 3.7 or later.
+Edit zones.json to add your own zones to be updated. 
+Make sure ip.json has write permissions
+Set cloudflare.py to run on a cron job
 
 Brent Russsell
 www.brentrussell.com
 '''
 
-config = [ 
-            # ['ZONE', 'RECORD', 'GLOBAL API_KEY at https://dash.cloudflare.com/profile', 'EMAIL@DOMAIN.COM' ]
-            # ['apple.com', 'maps.apple.com', 'f2f7sl269-FAKE-GLOBAL-KEY-hs34gxo5l2', 'stevejobs@apple.com' ]
-            ['domain1.com', 'domain1.com', 'ExAmPlEaPiKeY', 'contactemail@gmail.com', True ], 
-            ['domain2.com', 'subdomain.domain2.com', 'ExAmPlEaPiKeY', 'contactemail@gmail.com', False ], 
-            ['domain3.com', 'domain3.com', 'ExAmPlEaPiKeY', 'contactemail@gmail.com', True ],
-            ['domain4.com', 'example.domain4.com', 'AnOtHeRExAmPlEaPiKeY', 'contactAnotherEmail@gmail.com', True ]
-        ] 
+from urllib3.exceptions import HTTPError as BaseHTTPError
+import sys
+import re
+import json
+import requests
+import datetime
+import random
+
 
 if float(str(sys.version_info[0]) + '.' + str(sys.version_info[1])) < 3.6:
     raise_ex("Please upgrade to Python 3.7 or later", True)
@@ -29,7 +28,7 @@ if float(str(sys.version_info[0]) + '.' + str(sys.version_info[1])) < 3.6:
 
 def raise_ex(msg, terminate):
     print(msg)
-    terminate and sys.exit(1)
+    terminate and resetIpJson() and sys.exit(1)
 
 
 def getURL(url, rtype, headers='', payload=''):
@@ -50,97 +49,196 @@ def getURL(url, rtype, headers='', payload=''):
         return r
 
 
+def getIpProvider():
+    ipProviders = {
+        'https://api.ipify.org?format=json': 'ip',
+        'https://ipapi.co/json/': 'ip',
+        'https://api.bigdatacloud.net/data/client-ip': 'ipString'
+    }
+    return random.choice(list(ipProviders.items()))
+
+
 def remoteIP():
-    # https://www.ipify.org/ api to get public ip
-    ip_api = 'https://api.ipify.org?format=json'
-    ip = getURL(ip_api, 'get')
-    if ip.content:
-        data = json.loads(ip.content)
-        if not data['ip']:
-            raise_ex('No IP returned from ' + ip_api, True)
-        elif not re.search(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", data['ip']):
-            raise_ex('A valid IP was not returned from ' + ip_api, True)
+    try:
+        provider, key = getIpProvider()
+        ip = getURL(provider, 'get')
+        if not ip.content:
+            print(provider + "Did not respond with content")
+            provider, key = getIpProvider()
+            print('Trying again with ' + provider)
+            ip = getURL(provider, 'get')
+        if ip.content:
+            data = json.loads(ip.content)
+            if not data[key]:
+                raise_ex("No IP returned from " + provider, True)
+            elif not re.search(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", data[key]):
+                raise_ex("A valid IP was not returned from " + provider, True)
+            else:
+                return data[key]
         else:
-            return data['ip']
-    else:
-        raise_ex("No content returned from " + ip_api, True)
+            raise_ex("No content returned from " + provider, True)
+    except KeyError:
+        raise_ex(
+            "Unable to find required key in json response from " + provider, False)
+    except json.decoder.JSONDecodeError:
+        raise_ex("Not a valid json response from " + provider, False)
 
 
 def zoneData(headers, zone):
-    data = getURL('https://api.cloudflare.com/client/v4/zones?name=' + zone, 'get', headers)
-    zone_data = json.loads(data.content)
-    if len (zone_data['result']) > 0:
-        if not zone_data['result'][0]['id']:
-            raise_ex('Zone ' + zone + ' not found', True)
+    try:
+        data = getURL(
+            'https://api.cloudflare.com/client/v4/zones?name=' + zone, 'get', headers)
+        zone_data = json.loads(data.content)
+        if len(zone_data['result']) > 0:
+            if not zone_data['result'][0]['id']:
+                raise_ex(
+                    "Zone not found, no ID returned from Cloudflare api", False)
+            else:
+                return zone_data['result'][0]['id']
         else:
-            return zone_data['result'][0]['id']
-    else:
-        return False
+            raise_ex(
+                "Not a valid json response from Cloudflare, result key not found or no content returned while attempting to obtain zone id", False)
+    except json.decoder.JSONDecodeError:
+        raise_ex("Not a valid json response from Cloudflare", False)
+    except KeyError:
+        raise_ex(
+            "Unable to find result key in json response from Cloudflare", False)
 
 
 def recordData(headers, zone_id, record):
-    data = getURL('https://api.cloudflare.com/client/v4/zones/' + zone_id + '/dns_records?name=' + record, 'get', headers)
-    record_data = json.loads(data.content)
-    if len (record_data['result']) > 0:
-        if not record_data['result'][0]['id']:
-            raise_ex('Record ' + record + ' not found', True)
+    try:
+        data = getURL('https://api.cloudflare.com/client/v4/zones/' +
+                      zone_id + '/dns_records?name=' + record, 'get', headers)
+        record_data = json.loads(data.content)
+        if len(record_data['result']) > 0:
+            if not record_data['result'][0]['id']:
+                raise_ex(
+                    "Record not found, no ID returned from Cloudflare api", False)
+            else:
+                return record_data['result'][0]['id']
         else:
-            return record_data['result'][0]['id']
+            raise_ex(
+                "Not a valid json response from Cloudflare, result key not found or no content returned while attempting to obtain record id", False)
+    except json.decoder.JSONDecodeError:
+        raise_ex("Not a valid json response from Cloudflare", False)
+    except KeyError:
+        raise_ex(
+            "Unable to find result key in json response from Cloudflare", False)
+
+
+def updateRecord(headers, zone_id, record_id, record, remote_ip, proxied_state):
+    try:
+        payload = dict(type="A", name=record, content=remote_ip,
+                       ttl=1, proxied=proxied_state)
+        data = getURL('https://api.cloudflare.com/client/v4/zones/' + zone_id +
+                      '/dns_records/' + record_id, 'put', headers, json.dumps(payload))
+        update = json.loads(data.content)
+        if update['success']:
+            return 'success'
+        else:
+            return update['errors'][0]['message']
+    except KeyError:
+        raise_ex(
+            "Unable to find required key in json response from Cloudflare api", False)
+    except json.decoder.JSONDecodeError:
+        raise_ex("Not a valid json response from Cloudflare api", False)
+    except TypeError:
+        raise_ex(
+            "TypeError. This usually happens when the DNS record does not exist while attempting to update", False)
+
+
+def updateNeeded(remote_ip):
+    try:
+        ipFile = open('ip.json', 'r')
+        ipFilejson = json.load(ipFile)
+        currentip = ipFilejson['currentip']
+        lastip1 = ipFilejson['lastip1']
+        lastip2 = ipFilejson['lastip2']
+        lastip3 = ipFilejson['lastip3']
+        lastip4 = ipFilejson['lastip4']
+        ipFile.close()
+    except FileNotFoundError:
+        raise_ex("ip.json was not found", True)
+    except PermissionError:
+        raise_ex("Dont have permissions to open ip.json", True)
+    except KeyError:
+        raise_ex("Unable to find required keys in ip.json", True)
+    except json.decoder.JSONDecodeError:
+        raise_ex("ip.json does not contain proper json", True)
+    if currentip != remote_ip:
+        current_date = datetime.date.today()
+        newjson = {
+            "currentip": remote_ip,
+            "lastip1": currentip,
+            "lastip2": lastip1,
+            "lastip3": lastip2,
+            "lastip4": lastip3,
+            "date": current_date
+        }
+        try:
+            json_object = json.dumps(
+                newjson, sort_keys=True, default=str, indent=4)
+            with open("ip.json", "w") as ipFile:
+                ipFile.write(json_object)
+            ipFile.close()
+        except PermissionError:
+            raise_ex("Dont have permissions to write to ip.json", True)
+        return True
     else:
         return False
 
 
-def listToDict(lst):
-    op = {lst[i]: lst[i + 1] for i in range(0, len(lst), 2)}
-    return op
-
-
-def updateRecord(headers, zone_id, record, record_id, remote_ip, proxied_state):
-    payload = dict(type="A", name=record, content=remote_ip, ttl=1, proxied=proxied_state)
-    data = getURL('https://api.cloudflare.com/client/v4/zones/' + zone_id + '/dns_records/' + record_id, 'put', headers, json.dumps(payload))
-    update = json.loads(data.content)
-    if update['success']:
-        return 'success'
-    else:
-        return update['errors'][0]['message']
-
-
-# Get the remote IP of thsis machine
-remote_ip = remoteIP()
-total_updates = 0
-total_errors = 0
-if len(remote_ip) > 6:
-    for i in range(len(config)) : 
-        # Set headers to be used with cloudflare
-        headers = {
-            'Content-Type': 'application/json',
-            'X-Auth-Key': config[i][2],
-            'X-Auth-Email': config[i][3]
+def resetIpJson():
+    try:
+        ipFile = open('ip.json', 'r')
+        ipFilejson = json.load(ipFile)
+        ipFile.close()
+        newjson = {
+            "currentip": '0.0.0.0',
+            "date": ipFilejson['date'],
+            "lastip1": ipFilejson['lastip1'],
+            "lastip2": ipFilejson['lastip2'],
+            "lastip3": ipFilejson['lastip3'],
+            "lastip4": ipFilejson['lastip4']
         }
-        zone_id = zoneData(headers, config[i][0])  # Get Zone ID
-        if i > 0:
-            print('\n-----------------------------------------')
-        if zone_id:
-            record_id = recordData(headers, zone_id, config[i][1])  # Get record ID
-            if record_id:
-                print('Record: ' + config[i][1])
-                results = updateRecord(headers, zone_id, config[i][1], record_id, remote_ip, config[i][4])
-                if results == 'success':
-                    print('DNS for ' + config[i][1] + ' updated to ' + remote_ip)
-                    total_updates += 1
-                else:
-                    exists = re.search('already exists', results, flags=re.IGNORECASE)
-                    if exists is not None:
-                        print('DNS for ' + config[i][1] + ' already updated to ' + remote_ip)
-                        total_updates += 1
-                    else:
-                        print('Error updating DNS for ' + config[i][1] + ' to ' + remote_ip + ':' + results)
+        json_object = json.dumps(
+            newjson, sort_keys=True, default=str, indent=4)
+        with open("ip.json", "w") as ipFile:
+            ipFile.write(json_object)
+        ipFile.close()
+    except PermissionError:
+        raise_ex("Dont have permissions to write to ip.json", True)
+
+
+remote_ip = remoteIP()
+if updateNeeded(remote_ip):
+    try:
+        zoneFile = open('zones.json', 'r')
+        zoneFilejson = json.load(zoneFile)
+        # Get the zone list, Iterate through the zones updating them, close the file
+        for key in zoneFilejson['zones']:
+            # Set headers to be used with cloudflare API
+            print("zone = ", key['zone'])
+            headers = {
+                'Content-Type': 'application/json',
+                'X-Auth-Key': key['global_api_key'],
+                'X-Auth-Email': key['cloudflare_email']
+            }
+            zone_id = zoneData(headers, key['zone'])  # Get Zone ID
+            record_id = recordData(
+                headers, zone_id, key['record'])  # Get record ID
+            if updateRecord(headers, zone_id, record_id, key['record'], remote_ip, key['proxied_state']):
+                print("DNS for ", key['zone'], " updated to ", remote_ip)
             else:
-                print('Error getting record id for ' + config[i][1] + ', DNS not updated')
-                total_errors += 1
-        else:
-            print('Error getting zone id for ' + config[i][0] + ', DNS not updated')
-            total_errors += 1
-    print(f'\n----------------RESULTS----------------\n{total_updates} record(s) updated and {total_errors} error(s)')
+                print('DNS Update Failed')
+        zoneFile.close()
+    except FileNotFoundError:
+        raise_ex("zones.json was not found", True)
+    except PermissionError:
+        raise_ex("Dont have permissions to open zones.json", True)
+    except KeyError:
+        raise_ex("Unable to find required keys in zones.json", True)
+    except json.decoder.JSONDecodeError:
+        raise_ex("zones.json does not contain proper json", True)
 else:
-    print("Could not obtain IP from https://api.ipify.org?format=json")
+    print('no update needed')
