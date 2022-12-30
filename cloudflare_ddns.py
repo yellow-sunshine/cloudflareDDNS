@@ -23,11 +23,11 @@ Usage:
 
     - Using an external config file
     python3 cloudflare_ddns.py /path/to/file/myzones.json
-
-
-    
-
 '''
+
+# Allows cloudflare_ddns to update even if IP address has not changed
+#       This gives multiple tries to update a domain in case of a previous failure such as network, IO, or OS failures.
+random_force_update = True
 
 
 # ['ZONE', 'RECORD', 'GLOBAL API_KEY at https://dash.cloudflare.com/profile', 'EMAIL@DOMAIN.COM', 'Proxy the domain', 'Enabled' ]
