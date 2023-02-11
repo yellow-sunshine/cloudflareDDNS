@@ -1,2 +1,2 @@
 # cloudflareDDNS
-Update Cloudflare DNS via API
+Update multiple DNS entries for multiple domains using Cloudflare DNS
