@@ -4,6 +4,7 @@ import re
 import json
 import requests
 import random
+import time
 import datetime
 import os
 import argparse
@@ -45,7 +46,7 @@ if float(str(sys.version_info[0]) + '.' + str(sys.version_info[1])) < 3.6:
 
 
 def raise_ex(msg, terminate):
-    print(msg)
+    print(right_now, msg)
     if terminate:
         resetIpJson()
         sys.exit(1)
@@ -77,7 +78,9 @@ def getIpProvider():
         'https://checkip.amazonaws.com/': '',
         'https://ifconfig.me/ip': ''
     }
-    return random.choice(list(ipProviders.items()))
+    global thisProvider
+    thisProvider = random.choice(list(ipProviders.items()))
+    return thisProvider
 
 
 def validIP(ipString):
@@ -90,7 +93,8 @@ def validIP(ipString):
 def remoteIP():
     try:
         provider, key = getIpProvider()
-        ip = getURL(provider, 'get')
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36'}
+        ip = getURL(provider, 'get', headers)
         if ip.content:
             if key:
                 data = json.loads(ip.content)
@@ -112,7 +116,9 @@ def remoteIP():
 
 def updateNeeded(remote_ip):
     try:
-        ipFile = open('ip.json', 'r')
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, "ip.json")
+        ipFile = open(file_path, 'r')
         ipFilejson = json.load(ipFile)
         currentip = ipFilejson['currentip']
         lastip1 = ipFilejson['lastip1']
@@ -140,7 +146,9 @@ def updateNeeded(remote_ip):
         }
         try:
             json_object = json.dumps(newjson, sort_keys=True, default=str, indent=4)
-            with open("ip.json", "w") as ipFile:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            file_path = os.path.join(script_dir, "ip.json")
+            with open(file_path, "w") as ipFile:
                 ipFile.write(json_object)
             ipFile.close()
         except PermissionError:
@@ -152,7 +160,9 @@ def updateNeeded(remote_ip):
 
 def resetIpJson():
     try:
-        ipFile = open('ip.json', 'r')
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, "ip.json")
+        ipFile = open(file_path, 'r')
         ipFilejson = json.load(ipFile)
         ipFile.close()
         newjson = {
@@ -164,7 +174,7 @@ def resetIpJson():
             "lastip4": ipFilejson['lastip4']
         }
         json_object = json.dumps(newjson, sort_keys=True, default=str, indent=4)
-        with open("ip.json", "w") as ipFile:
+        with open(file_path, "w") as ipFile:
             ipFile.write(json_object)
         ipFile.close()
     except PermissionError:
@@ -279,8 +289,35 @@ def argvs():
                     # innerConfig.append(zoneFilejson[outer][key])
                 outerConfig.append(innerConfig)
                 outer += 1
-            print("Updating DNS records from", args.configFile)
+            # print("Updating DNS records from", args.configFile)
             return outerConfig
+
+
+def clear_log():
+    # Clears a log if written to by cron with >> /path/to/cloudflare_ddns/cloudflare_ddns.log at the end of the cronjob
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, "cloudflare_ddns.log")
+    current_time = datetime.datetime.now().time()
+    current_day = datetime.datetime.today().weekday()
+    start_time = datetime.time(3, 20)
+    end_time = datetime.time(3, 30)
+    if current_day == 2 and start_time <= current_time <= end_time:
+        with open(file_path, "w") as file:
+            file.write("")
+
+
+def rightNow():
+    global right_now
+    current_time = time.localtime()
+    right_now = time.strftime("%Y-%m-%d %I:%M %p", current_time)
+    return right_now
+
+
+def init():
+    # Create global time to be used
+    rightNow()
+    # Check if we need to clear the log file
+    clear_log()
 
 
 def main():
@@ -308,7 +345,7 @@ def main():
                 }
                 zone_id = zoneData(headers, config[i][0])  # Get Zone ID
                 if i == 0:
-                    print('\n Starting....\n')
+                    print('\n Starting....\n', right_now, '\n')
                 if i > 0:
                     print('-----------------------------------------\n')
                 if zone_id:
@@ -317,7 +354,7 @@ def main():
                     record_id = recordData(headers, zone_id, config[i][1])  # Get record ID
                     if record_id:
                         if not config[i][5]:
-                            print(config[i][1], "Not enabled, skipping.")
+                            print(right_now, config[i][1], "Not enabled, skipping.")
                             continue
                         try:
                             results = updateRecord(headers, zone_id, config[i][1], record_id, remote_ip, config[i][4])
@@ -325,27 +362,28 @@ def main():
                             total_errors += 1
                             raise_ex("Index Error occurred, Check configuration values", False)
                         if results == 'success':
-                            print('DNS for ' + config[i][1] + ' updated to ' + remote_ip)
+                            print(right_now, 'DNS for ' + config[i][1] + ' updated to ' + remote_ip)
                             total_updates += 1
                         else:
                             exists = re.search('already exists', results, flags=re.IGNORECASE)
                             if exists is not None:
-                                print('DNS for ' + config[i][1] + ' already updated to ' + remote_ip)
+                                print(right_now, 'DNS for ' + config[i][1] + ' already updated to ' + remote_ip)
                                 total_updates += 1
                             else:
-                                print('Error updating DNS for ' + config[i][1] + ' to ' + remote_ip + ':' + results)
+                                print(right_now, 'Error updating DNS for ' + config[i][1] + ' to ' + remote_ip + ':' + results)
                     else:
-                        print('Error getting record id for ' + config[i][1] + ', DNS not updated')
+                        print(right_now, 'Error getting record id for ' + config[i][1] + ', DNS not updated')
                         total_errors += 1
                 else:
                     print('Error getting zone id for ' + config[i][0] + ', DNS not updated')
                     total_errors += 1
             print(f'\n################# RESULTS #################\n{total_updates} record(s) updated and {total_errors} error(s)\n')
         else:
-            print("Could not obtain IP from https://api.ipify.org?format=json")
+            print(right_now, "Could not obtain current remote IP")
     else:
-        print('No updated needed. Ip address', remote_ip, 'has not changed')
+        print(right_now, 'No updated needed.', thisProvider[0], 'reports Ip address', remote_ip, 'which has not changed')
 
 
 config = argvs()
+init()
 main()
